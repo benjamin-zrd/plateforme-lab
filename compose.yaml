@@ -1,0 +1,28 @@
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+
+  kuma:
+    image: louislam/uptime-kuma:2
+    restart: unless-stopped
+    volumes:
+      - ./data/kuma:/app/data
+
+  ntfy:
+    image: binwiederhier/ntfy:v2.34.0
+    command: serve
+    restart: unless-stopped
+    environment:
+      - TZ=Europe/Paris
+      - NTFY_BASE_URL=https://notif.benjamin.lab-cesi.fr
+      - NTFY_CACHE_FILE=/var/cache/ntfy/cache.db
+      - NTFY_BEHIND_PROXY=true
+    volumes:
+      - ./data/ntfy:/var/cache/ntfy

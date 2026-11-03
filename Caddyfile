@@ -1,0 +1,7 @@
+status.benjamin.lab-cesi.fr {
+    reverse_proxy kuma:3001
+}
+
+notif.benjamin.lab-cesi.fr {
+    reverse_proxy ntfy:80
+}

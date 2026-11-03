@@ -1,0 +1,6 @@
+[Unit]
+Description=Sauvegarde restic de la plateforme
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-plateforme.sh
