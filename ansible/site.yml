@@ -1,0 +1,120 @@
+---
+- name: Plateforme Caddy + Kuma + ntfy (Ubuntu 24.04)
+  hosts: plateforme
+  become: true
+  vars:
+    projet_dir: /srv/plateforme
+    domaine_status: status.benjamin.lab-cesi.fr
+    restic_pass_file: /root/.restic-pass
+
+  tasks:
+    - name: Paquets système (état présent)
+      ansible.builtin.apt:
+        name:
+          - nftables
+          - restic
+          - ca-certificates
+          - curl
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Le secret restic existe (jamais stocké dans le dépôt)
+      ansible.builtin.stat:
+        path: "{{ restic_pass_file }}"
+      register: restic_pass
+
+    - name: Échec explicite s'il manque
+      ansible.builtin.assert:
+        that: restic_pass.stat.exists
+        fail_msg: "{{ restic_pass_file }} absent : le créer à la main (hors Git)."
+
+    - name: Pare-feu nftables (règles validées avant écriture)
+      ansible.builtin.copy:
+        src: files/nftables.conf
+        dest: /etc/nftables.conf
+        owner: root
+        group: root
+        mode: "0755"
+        validate: nft -c -f %s
+      notify: Recharger nftables
+
+    - name: nftables activé et démarré
+      ansible.builtin.systemd_service:
+        name: nftables
+        enabled: true
+        state: started
+
+    - name: CrowdSec et bouncer activés
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - crowdsec
+        - crowdsec-firewall-bouncer
+
+    - name: Dossiers de données des conteneurs (droits alignés sur l'existant)
+      ansible.builtin.file:
+        path: "{{ projet_dir }}/data/{{ item.nom }}"
+        state: directory
+        owner: "{{ item.uid }}"
+        group: "{{ item.uid }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { nom: caddy, uid: "0", mode: "0755" }
+        - { nom: kuma, uid: "1000", mode: "0755" }
+        - { nom: ntfy, uid: "1000", mode: "0775" }
+
+    - name: Script de sauvegarde
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/backup-plateforme.sh"
+        dest: /usr/local/bin/backup-plateforme.sh
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Unités systemd de sauvegarde
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../systemd/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - backup-plateforme.service
+        - backup-plateforme.timer
+      notify: Recharger systemd
+
+    - name: Recharger systemd maintenant si nécessaire
+      ansible.builtin.meta: flush_handlers
+
+    - name: Timer de sauvegarde actif
+      ansible.builtin.systemd_service:
+        name: backup-plateforme.timer
+        enabled: true
+        state: started
+
+    - name: Pile Docker Compose (caddy, kuma, ntfy)
+      community.docker.docker_compose_v2:
+        project_src: "{{ projet_dir }}"
+        state: present
+        pull: missing
+
+    - name: Vérification HTTPS de Kuma (certificat valide)
+      ansible.builtin.uri:
+        url: "https://{{ domaine_status }}"
+        status_code: [200, 302]
+        follow_redirects: none
+        validate_certs: true
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Recharger nftables
+      ansible.builtin.systemd_service:
+        name: nftables
+        state: reloaded
+
+    - name: Recharger systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
